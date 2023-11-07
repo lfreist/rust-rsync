@@ -47,7 +47,7 @@ impl Server for UdpServer {
         let mut buf = [0; 1024];
         loop {
             let (size, src_addr) = socket.recv_from(&mut buf).expect("Didn't receive data");
-            info!(target: "UdpServer", "Handling connection from {}: {:?}", src_addr, size);
+            info!(target: "UdpServer", "Received data from {}: {:?}", src_addr, size);
         }
     }
 }

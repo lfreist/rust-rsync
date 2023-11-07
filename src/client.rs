@@ -2,7 +2,7 @@ use std::io;
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 use std::net::UdpSocket;
-use std::io::{Read, Write};
+use std::io::Write;
 use log::{info, debug, error};
 
 pub trait Client {

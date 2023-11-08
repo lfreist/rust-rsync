@@ -4,7 +4,7 @@ use std::net::UdpSocket;
 use std::io::Read;
 use log::{info};
 
-pub trait Server {
+pub trait ServerTrait {
     fn run(&self);
 }
 
@@ -12,7 +12,7 @@ pub struct TcpServer {
     address: String
 }
 
-impl Server for TcpServer {
+impl ServerTrait for TcpServer {
     fn run(&self) {
         let listener = TcpListener::bind(&self.address).unwrap();
         info!(target: "TcpServer", "TCP Server is running: {:?}", self.address);
@@ -39,7 +39,7 @@ pub struct UdpServer {
     address: String
 }
 
-impl Server for UdpServer {
+impl ServerTrait for UdpServer {
     fn run(&self) {
         let socket = UdpSocket::bind(&self.address).unwrap();
         info!(target: "UdpServer", "UDP Server running on {}", &self.address);
@@ -56,6 +56,21 @@ impl UdpServer {
     pub fn new(address: &str) -> Self {
         UdpServer {
             address: address.to_string(),
+        }
+    }
+}
+
+enum Server {
+    UDP(UdpServer),
+    TCP(TcpServer),
+}
+
+// Implement the ServerTrait for the Server enum
+impl ServerTrait for Server {
+    fn run(&self) {
+        match self {
+            Server::UDP(udp_server) => udp_server.run(),
+            Server::TCP(tcp_server) => tcp_server.run(),
         }
     }
 }

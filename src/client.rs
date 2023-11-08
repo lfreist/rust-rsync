@@ -4,8 +4,9 @@ use std::net::TcpStream;
 use std::net::UdpSocket;
 use std::io::Write;
 use log::{info, debug, error};
+use std::path::Path;
 
-pub trait Client {
+pub trait ClientTrait {
     fn send_receive(&self, data: &String) -> io::Result<String>;
 }
 
@@ -13,7 +14,7 @@ pub struct TcpClient {
     address: String,
 }
 
-impl Client for TcpClient {
+impl ClientTrait for TcpClient {
     fn send_receive(&self, data: &String) -> io::Result<String> {
         debug!(target: "TcpClient", "Connecting to server: {:?}", self.address);
         match TcpStream::connect(&self.address) {
@@ -49,7 +50,7 @@ pub struct UdpClient {
     address: String,
 }
 
-impl Client for UdpClient {
+impl ClientTrait for UdpClient {
     fn send_receive(&self, data: &String) -> io::Result<String> {
         debug!(target: "UdpClient", "Setting up Udp Connection: {:?}", self.address);
         let socket = UdpSocket::bind("0.0.0.0:0")?;
@@ -72,5 +73,58 @@ impl UdpClient {
         UdpClient {
             address: address.to_string(),
         }
+    }
+}
+
+pub enum NetworkClient {
+    UDP(UdpClient),
+    TCP(TcpClient),
+}
+
+// Implement the ServerTrait for the Server enum
+impl ClientTrait for NetworkClient {
+    fn send_receive(&self, data: &String) -> io::Result<String> {
+        match self {
+            NetworkClient::UDP(udp_client) => udp_client.send_receive(data),
+            NetworkClient::TCP(tcp_client) => tcp_client.send_receive(data),
+        }
+    }
+}
+
+pub enum Verbosity {
+    OFF,
+    LOW,
+    REG,
+    HIGH
+}
+
+pub struct RsyncClient {
+    verbosity: Verbosity
+}
+
+impl RsyncClient {
+    pub fn new(verbosity: Verbosity) ->RsyncClient {
+        RsyncClient { verbosity }
+    }
+
+    pub fn run(&self, src: &Path, dst: &Path, network_client: Option<NetworkClient>) -> bool {
+        match network_client {
+            None => {
+                self.run_local(src, dst)
+            }
+            Some(client) => {
+                self.run_remote(src, dst, client)
+            }
+        }
+    }
+
+    fn run_remote(&self, src: &Path, dst: &Path, network_client: NetworkClient) -> bool {
+        debug!(target: "RsyncClient", "Remote: {:?} -> {:?}", src, dst);
+        true
+    }
+
+    fn run_local(&self, src: &Path, dst: &Path) -> bool {
+        debug!(target: "RsyncClient", "Local: {:?} -> {:?}", src, dst);
+        true
     }
 }

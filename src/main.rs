@@ -1,9 +1,7 @@
 
 extern crate rsync;
 
-use std::thread;
-use rsync::client::Client;
-use rsync::server::Server;
+use rsync::client::Verbosity;
 
 fn main() {
     simple_logger::SimpleLogger::new()
@@ -26,13 +24,11 @@ fn main() {
         }
     }
     */
-    let handle = thread::spawn(|| {
-        let server = rsync::server::UdpServer::new("127.0.0.1:6666");
-        server.run();
-    });
-    let client = rsync::client::UdpClient::new("127.0.0.1:6666");
-    let mut data = String::new();
-    data.push_str("test data");
-    client.send_receive(&data).expect("TODO: panic message");
-    handle.join().unwrap();
+    let client = rsync::client::RsyncClient::new(Verbosity::HIGH);
+    let result = client.run("test".as_ref(), "test2".as_ref(), None);
+    if result {
+        println!("Success!");
+    } else {
+        println!("Failed!");
+    }
 }

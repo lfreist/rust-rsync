@@ -1,10 +1,13 @@
-use std::io;
-use std::io::{BufRead, BufReader};
+use std::any::{Any, TypeId};
+use std::fs::DirEntry;
+use std::{fs, io};
+use std::io::{BufRead, BufReader, Read};
 use std::net::TcpStream;
 use std::net::UdpSocket;
 use std::io::Write;
 use log::{info, debug, error};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::vec::IntoIter;
 
 pub trait ClientTrait {
     fn send_receive(&self, data: &String) -> io::Result<String>;
@@ -125,6 +128,9 @@ impl RsyncClient {
 
     fn run_local(&self, src: &Path, dst: &Path) -> bool {
         debug!(target: "RsyncClient", "Local: {:?} -> {:?}", src, dst);
+        if src.is_dir() {
+
+        }
         true
     }
 }

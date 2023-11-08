@@ -1,9 +1,12 @@
 
 extern crate rsync;
 
-use rsync::client::Verbosity;
+use std::env;
+use rsync::file::{FileChunkIterator};
+use std::fs::File;
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
     simple_logger::SimpleLogger::new()
         .init()
         .unwrap();
@@ -24,11 +27,19 @@ fn main() {
         }
     }
     */
-    let client = rsync::client::RsyncClient::new(Verbosity::HIGH);
-    let result = client.run("test".as_ref(), "test2".as_ref(), None);
-    if result {
-        println!("Success!");
-    } else {
-        println!("Failed!");
+    let file = File::open(&args[1]).unwrap();
+    let iterator = FileChunkIterator::new(file, 128, true);
+
+    for chunk_result in iterator {
+        match chunk_result {
+            Ok(chunk) => {
+                println!("Chunk at offset {}: size={} adler32={} md5={:?}",
+                         chunk.begin, chunk.size, chunk.adler32, chunk.md5);
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                break;
+            }
+        }
     }
 }

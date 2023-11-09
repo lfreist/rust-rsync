@@ -2,8 +2,8 @@
 extern crate rsync;
 
 use std::env;
-use rsync::file::{FileChunkIterator};
-use std::fs::File;
+use rsync::client::{Client, Sender, Verbosity};
+use rsync::file::{FileChunkIterator, RecursiveDirectoryIterator};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -26,7 +26,7 @@ fn main() {
             }
         }
     }
-    */
+
     let file = File::open(&args[1]).unwrap();
     let iterator = FileChunkIterator::new(file, 128, true);
 
@@ -42,4 +42,9 @@ fn main() {
             }
         }
     }
+    */
+
+    let client = Client::new(args[1].parse().unwrap(), args[2].parse().unwrap(), 128);
+    let success = client.run(None);
+    println!("{}", success);
 }

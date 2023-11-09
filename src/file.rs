@@ -1,7 +1,7 @@
 use std::fs;
 use std::fs::DirEntry;
 use std::io;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 use std::vec::IntoIter;
 use crate::checksum;
@@ -48,11 +48,11 @@ pub struct DataChunk {
     pub begin: usize,
     pub size: usize,
     pub adler32: u32,
-    pub md5: Option<String>,
+    pub md5: String,
 }
 
 
-struct RecursiveDirectoryIterator {
+pub struct RecursiveDirectoryIterator {
     stack: Vec<IntoIter<DirEntry>>,
 }
 
@@ -97,16 +97,14 @@ impl Iterator for RecursiveDirectoryIterator {
 pub struct FileChunkIterator<R> {
     reader: R,
     chunk_size: usize,
-    rolling: bool,
     offset: usize,
 }
 
 impl<R: Read + Seek> FileChunkIterator<R> {
-    pub fn new(reader: R, chunk_size: usize, rolling: bool) -> Self {
+    pub fn new(reader: R, chunk_size: usize) -> Self {
         Self {
             reader,
             chunk_size,
-            rolling,
             offset: 0,
         }
     }
@@ -116,55 +114,28 @@ impl<R: Read + Seek> Iterator for FileChunkIterator<R> {
     type Item = io::Result<DataChunk>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.rolling {
-            let mut buffer = vec![0; self.chunk_size];
-            match self.reader.seek(SeekFrom::Start(self.offset as u64)) {
-                Ok(_) => {
-                    let mut buffer = vec![0; self.chunk_size];
-                    match self.reader.read(&mut buffer) {
-                        Ok(bytes_read) => {
-                            if bytes_read == 0 {
-                                None
-                            } else {
-                                let adler32_checksum = checksum::adler32(&buffer);
-                                let chunk = DataChunk {
-                                    begin: self.offset,
-                                    size: bytes_read,
-                                    adler32: adler32_checksum,
-                                    md5: None,
-                                };
-                                self.offset += 1;
-                                Some(Ok(chunk))
-                            }
-                        }
-                        Err(e) => Some(Err(e)),
-                    }
-                }
-                Err(e) => Some(Err(e)),
-            }
-        } else {
-            let mut buffer = vec![0; self.chunk_size];
-            match self.reader.read(&mut buffer) {
-                Ok(bytes_read) => {
-                    if bytes_read == 0 {
-                        None
-                    } else {
-                        let adler32_checksum = checksum::adler32(&buffer);
-                        let md5_checksum = Some(checksum::md5(&buffer));
-                        let chunk = DataChunk {
-                            begin: self.offset,
-                            size: bytes_read,
-                            adler32: adler32_checksum,
-                            md5: md5_checksum,
-                        };
+        let mut buffer = vec![0; self.chunk_size];
+        match self.reader.read(&mut buffer) {
+            Ok(bytes_read) => {
+                if bytes_read == 0 {
+                    None
+                } else {
+                    buffer.truncate(bytes_read);
+                    let adler32_checksum = checksum::adler32(&buffer);
+                    let md5_checksum = checksum::md5(&buffer);
+                    let chunk = DataChunk {
+                        begin: self.offset,
+                        size: bytes_read,
+                        adler32: adler32_checksum,
+                        md5: md5_checksum,
+                    };
 
 
-                        self.offset += bytes_read;
-                        Some(Ok(chunk))
-                    }
+                    self.offset += bytes_read;
+                    Some(Ok(chunk))
                 }
-                Err(e) => Some(Err(e)),
             }
+            Err(e) => Some(Err(e)),
         }
     }
 }

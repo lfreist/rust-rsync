@@ -62,7 +62,7 @@ impl UdpServer {
 
 enum Server {
     UDP(UdpServer),
-    TCP(TcpServer),
+    TCP(TcpServer)
 }
 
 // Implement the ServerTrait for the Server enum

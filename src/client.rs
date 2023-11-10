@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Read};
@@ -6,9 +7,9 @@ use std::net::UdpSocket;
 use std::io::Write;
 use log::{info, debug, error};
 use std::path::{Path, PathBuf, StripPrefixError};
-use crate::checksum;
 
-use crate::file::{DataChunk, FileChunkIterator, RecursiveDirectoryIterator};
+use crate::{checksum, file};
+use crate::file::{ChunkInfo, FileChunkIterator, RecursiveDirectoryIterator};
 
 pub trait ClientTrait {
     fn send_receive(&self, data: &String) -> io::Result<String>;
@@ -110,7 +111,7 @@ pub struct Sender {
 
 struct FileInfo {
     path_suffix: PathBuf,
-    data: Vec<DataChunk>,
+    data: HashMap<u32, HashMap<String, ChunkInfo>>,
 }
 
 struct Common {
@@ -131,6 +132,19 @@ fn get_suffix(path: &Path, prefix: &Path) -> Result<PathBuf, StripPrefixError> {
     }
 }
 
+fn merge_maps(fst: &mut HashMap<u32, HashMap<String, ChunkInfo>>, snd: HashMap<u32, HashMap<String, ChunkInfo>>) {
+    for (key, value) in snd {
+        match fst.get_mut(&key) {
+            Some(map) => {
+                map.extend(value);
+            }
+            None => {
+                fst.insert(key, value);
+            }
+        }
+    }
+}
+
 impl Sender {
     pub fn new(path: &Path, verbosity: Verbosity, block_size: usize) -> Sender {
         Sender { path: path.to_path_buf(), verbosity, block_size }
@@ -142,19 +156,18 @@ impl Sender {
         let file_result = File::open(&file_path);
         match file_result {
             Ok(file) => {
-                let mut chunk_data: Vec<DataChunk> = vec![];
-                chunk_data.reserve(file.metadata().unwrap().len() as usize / self.block_size);
+                let mut final_chunk_info_map: HashMap<u32, HashMap<String, ChunkInfo>> = HashMap::new();
                 let reader = BufReader::new(file);
                 let file_chunk_iterator = FileChunkIterator::new(reader, self.block_size);
                 for chunk_result in file_chunk_iterator {
                     match chunk_result {
-                        Ok(chunk) => chunk_data.push(chunk),
+                        Ok(chunk_info_map) => merge_maps(&mut final_chunk_info_map, chunk_info_map),
                         Err(e) => eprintln!("Error: {}", e)
                     }
                 }
                 Ok(FileInfo {
                     path_suffix: get_suffix(file_path.as_path(), self.path.as_path()).unwrap(),
-                    data: chunk_data,
+                    data: final_chunk_info_map,
                 })
             }
             Err(e) => Err(e)
@@ -176,65 +189,56 @@ impl Receiver {
         let file_path = if suffix.to_str().unwrap().is_empty() { self.path.clone() } else { self.path.join(suffix) };
         match File::open(&file_path) {
             Ok(file) => {
-                let mut common: Vec<Common> = vec![];
-                let mut reader = BufReader::new(file);
-                let mut offset: usize = 0;
-                let mut buffer = vec![0u8; chunk_size];
-                'reader: loop {
-                    match reader.read(&mut buffer) {
-                        Ok(bytes_read) => {
-                            if bytes_read < chunk_size {
-                                buffer.truncate(bytes_read);
-                                // we have reached the last chunk and thus only need to compare to
-                                //  the last source_chunk...
-                                let last_chunk: &DataChunk = file_info.data.last().unwrap();
-                                if last_chunk.adler32 == checksum::adler32(&buffer) {
-                                    if last_chunk.md5 == checksum::md5(&buffer) {
-                                        debug!(target: "Receiver.compare", "Common: {}, {}, size: {}", last_chunk.begin, offset, last_chunk.size);
-                                        common.push(Common {
-                                            src_begin: last_chunk.begin,
-                                            dst_begin: offset,
-                                            size: last_chunk.size,
-                                        });
+                let mut offset: u64 = 0;
+                let mut matches: Vec<Common> = vec![];
+                let mut window_shift = chunk_size;
+                let mut reader = file::SlidingWindowReader::new(file, chunk_size);
+                loop {
+                    match reader.read(window_shift) {
+                        Ok(data) => {
+                            match data {
+                                Some(data) => {
+                                    let common = self.check_is_identical(&data.0, offset as usize, file_info);
+                                    if common.is_some() {
+                                        matches.push(common.unwrap());
+                                        window_shift = chunk_size;
+                                        offset += chunk_size as u64;
+                                    } else {
+                                        window_shift = 1;
+                                        offset += 1;
+                                    }
+                                    if data.1 < chunk_size {
+                                        break;
                                     }
                                 }
-                                break;
+                                None => break
                             }
-
-                            let adler32 = checksum::adler32(&buffer);
-                            // if md5 was computed for the current chunk, it is stored here until the next
-                            //  chunk is read
-                            let mut md5: Option<String> = None;
-
-                            for source_chunk in &file_info.data {
-                                if source_chunk.adler32 == adler32 {
-                                    if md5.is_none() {
-                                        md5 = Some(checksum::md5(&buffer));
-                                    }
-
-                                    if source_chunk.md5 == md5.clone().unwrap() {
-                                        debug!(target: "Receiver.compare", "Common: {}, {}, size: {}", source_chunk.begin, offset, source_chunk.size);
-                                        common.push(Common {
-                                            src_begin: source_chunk.begin,
-                                            dst_begin: offset,
-                                            size: source_chunk.size,
-                                        });
-                                        offset += bytes_read;
-                                        continue 'reader;
-                                    }
-                                }
-                            }
-                            // reset md5 to None to recompute it on the next chunk
-                            md5 = None;
-                            reader.seek_relative((bytes_read - 1) as i64).expect("TODO: panic message");
-                            offset += 1;
                         }
                         Err(_) => break
                     }
                 }
-                Some(FileCompare { path_suffix: suffix.to_path_buf(), common })
+                Some(FileCompare { path_suffix: suffix.to_path_buf(), common: matches })
             }
             Err(_) => None
+        }
+    }
+
+    fn check_is_identical(&self, slice: &[u8], offset: usize, file_info: &FileInfo) -> Option<Common> {
+        match file_info.data.get(&checksum::adler32(slice)) {
+            Some(md5_map) => {
+                match md5_map.get(&checksum::md5(slice)) {
+                    Some(source_chunk) => {
+                        debug!(target: "Receiver.compare", "Common: {}, {}, size: {}", source_chunk.begin, offset, source_chunk.size);
+                        Some(Common {
+                            src_begin: source_chunk.begin,
+                            dst_begin: offset,
+                            size: source_chunk.size,
+                        })
+                    }
+                    None => None
+                }
+            }
+            None => None
         }
     }
 }

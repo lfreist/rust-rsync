@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::fs;
 use std::fs::DirEntry;
 use std::io;
-use std::io::{Read, Seek};
+use std::io::{BufReader, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::vec::IntoIter;
 use crate::checksum;
@@ -44,11 +45,9 @@ impl Iterator for File {
     }
 }
 
-pub struct DataChunk {
+pub struct ChunkInfo {
     pub begin: usize,
     pub size: usize,
-    pub adler32: u32,
-    pub md5: String,
 }
 
 
@@ -111,7 +110,7 @@ impl<R: Read + Seek> FileChunkIterator<R> {
 }
 
 impl<R: Read + Seek> Iterator for FileChunkIterator<R> {
-    type Item = io::Result<DataChunk>;
+    type Item = io::Result<HashMap<u32, HashMap<String, ChunkInfo>>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut buffer = vec![0; self.chunk_size];
@@ -123,19 +122,47 @@ impl<R: Read + Seek> Iterator for FileChunkIterator<R> {
                     buffer.truncate(bytes_read);
                     let adler32_checksum = checksum::adler32(&buffer);
                     let md5_checksum = checksum::md5(&buffer);
-                    let chunk = DataChunk {
+                    let chunk_info = ChunkInfo {
                         begin: self.offset,
-                        size: bytes_read,
-                        adler32: adler32_checksum,
-                        md5: md5_checksum,
+                        size: bytes_read
                     };
 
-
+                    let mut md5_map = HashMap::new();
+                    md5_map.insert(md5_checksum, chunk_info);
+                    let mut adler32_map = HashMap::new();
+                    adler32_map.insert(adler32_checksum, md5_map);
                     self.offset += bytes_read;
-                    Some(Ok(chunk))
+                    Some(Ok(adler32_map))
                 }
             }
             Err(e) => Some(Err(e)),
         }
+    }
+}
+
+pub struct SlidingWindowReader {
+    reader: BufReader<fs::File>,
+    buffer: Vec<u8>,
+    window_size: usize,
+}
+
+impl SlidingWindowReader {
+    pub fn new(file: fs::File, window_size: usize) -> Self {
+        let reader = BufReader::new(file);
+        let buffer = vec![0; window_size];
+        Self {reader, buffer, window_size}
+    }
+
+    pub fn read(&mut self, shift: usize) -> io::Result<Option<(&[u8], usize)>> {
+        self.buffer.rotate_left(shift);
+        let bytes_read = self.reader.read(&mut self.buffer[(self.window_size - shift)..])?;
+        //println!("{}", String::from_utf8_lossy(&self.buffer));
+        if bytes_read == 0 {
+            return Ok(None)
+        }
+        if bytes_read < shift {
+            return Ok(Some((&self.buffer[0..bytes_read], bytes_read)));
+        }
+        Ok(Some((&self.buffer, self.window_size)))
     }
 }
